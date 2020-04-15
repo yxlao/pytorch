@@ -6,6 +6,9 @@
 #include <ATen/core/EnableNamedTensor.h>
 #include <ATen/native/TypeProperties.h>
 
+#include <iostream>
+#include <sstream>
+
 namespace at {
 
 using DimMask = TensorIterator::DimMask;
@@ -878,7 +881,26 @@ bool TensorIterator::can_use_32bit_indexing() const {
   return true;
 }
 
+static std::string to_string(const IntArrayRef& array, int dim) {
+  std::stringstream ss;
+  ss << "(";
+  for (int i = 0; i < dim; i++) {
+    if (i == dim - 1) {
+      ss << array[i];
+    } else {
+      ss << array[i] << " ";
+    }
+  }
+  ss << ")";
+  return ss.str();
+}
+
 std::unique_ptr<TensorIterator> TensorIterator::split(int dim) {
+  std::cout << "[Before]" << std::endl;
+  std::cout << "dim_to_split: " << dim << std::endl;
+  std::cout << "shape: " << to_string(shape(), ndim()) << std::endl;
+  std::cout << "num_reduce_dims: " << num_reduce_dims() << std::endl;
+
   AT_ASSERT(dim >= 0 && dim < ndim() && shape()[dim] >= 2);
   std::unique_ptr<TensorIterator> copy(new TensorIterator(*this));
 
@@ -889,6 +911,12 @@ std::unique_ptr<TensorIterator> TensorIterator::split(int dim) {
   copy->final_output_ &= !overlaps;
   this->narrow(dim, copy_size, this_size);
   this->accumulate_ |= overlaps;
+
+  std::cout << "[After]" << std::endl;
+  std::cout << "this->shape: " << to_string(shape(), ndim()) << std::endl;
+  std::cout << "copy->shape: " << to_string(copy->shape(), copy->ndim()) << std::endl;
+  std::cout << "this->num_reduce_dims: " << this->num_reduce_dims() << std::endl;
+  std::cout << "copy->num_reduce_dims: " << copy->num_reduce_dims() << std::endl;
 
   return copy;
 }

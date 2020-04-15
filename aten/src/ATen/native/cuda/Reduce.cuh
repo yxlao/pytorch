@@ -18,6 +18,8 @@
 #include <utility>
 #include <thrust/tuple.h>
 
+#include <iostream>
+
 namespace at { namespace native {
 
 using at::detail::Array;
@@ -90,6 +92,7 @@ struct ReduceConfig {
   }
 
   int split_input(int parallelism) {
+    std::cout << "split_input called with " << parallelism << std::endl;
     int step = step_input;
     step_input *= parallelism;
     return step;
@@ -621,6 +624,8 @@ struct AccumulationBuffer {
       acc_ptr_ = (char*)buffer_.get();
       numerator_ = acc_t_size;
       denominator_ = out_t_size;
+      std::cout << "numerator_ / denominator_" << numerator_ << " / "
+                      << numerator_ << std::endl;
       reduce_fraction(numerator_, denominator_);
     }
   }
@@ -659,15 +664,18 @@ inline void gpu_reduce_kernel(TensorIterator& iter, const ops_t& ops, ident_t id
     // acc_buf_ptr holds buffer used for accumulation among multiple sub_iter
     // when accumulation in output is not possible.
     if (!can_accumulate_in_output && !can_use_32bit_indexing) {
+      std::cout << "accumulation in output not possible." << std::endl;
       int64_t output_memory_size = 1;
       for (int dim = 0; dim < iter.ndim(); dim++) {
         output_memory_size = std::max(output_memory_size, iter.shape()[dim] * iter.strides(0)[dim]);
       }
+      std::cout << "output_memory_size: " << output_memory_size << std::endl;
       owned_buf_ptr.reset(new AccumulationBuffer(sizeof(arg_t),
                                                  sizeof(out_scalar_t),
                                                  (char*) iter.data_ptr(0),
                                                  output_memory_size * sizeof(arg_t)));
     } else {
+      std::cout << "accumulation in output possible." << std::endl;
       owned_buf_ptr.reset(new AccumulationBuffer());
     }
     acc_buf_ptr = owned_buf_ptr.get();
@@ -697,6 +705,10 @@ inline void gpu_reduce_kernel(TensorIterator& iter, const ops_t& ops, ident_t id
   int64_t inputs_per_output = iter.numel() / num_outputs;
   int input_index = iter.ntensors() - 1;
 
+  std::cout << "iter.numel() " << iter.numel() << std::endl;
+  std::cout << "num_outputs " << num_outputs << ", inputs_per_output "
+            << inputs_per_output << std::endl;
+
   auto config = ReduceConfig(sizeof(arg_t), num_outputs, inputs_per_output);
 
   int64_t dim0;
@@ -710,6 +722,16 @@ inline void gpu_reduce_kernel(TensorIterator& iter, const ops_t& ops, ident_t id
       (iter.num_reduce_dims() == iter.ndim()) ||
       (iter.strides(/*arg=*/input_index)[0] <
        iter.strides(/*arg=*/input_index)[iter.num_reduce_dims()]);
+  std::cout << "ref_data: "
+            << iter.num_reduce_dims() << " "
+            << iter.ndim() << " "
+            << iter.strides(input_index)[0] << " "
+            << iter.strides(/*arg=*/input_index)[iter.num_reduce_dims()]
+            << std::endl;
+
+  std::cout << "reduction_on_fastest_striding_dimension "
+            << reduction_on_fastest_striding_dimension << std::endl;
+
   // Notice that dim0 & dim1 does NOT guarantee any launch configuration here!
   // dim0 & dim1 are more like the upper bound of the block dimension. The
   // actual launch config and reduction scheme is determined by setting values
@@ -740,9 +762,11 @@ inline void gpu_reduce_kernel(TensorIterator& iter, const ops_t& ops, ident_t id
     // Split the input across lanes if the input is contiguous in the reduced
     // dimension. This will require reduction between threads using warp
     // shuffle instructions and shared memory (if block_width > warpSize).
+    std::cout << "(indexer.NumDims() == 0 || reduction_on_fastest_striding_dimension)" << std::endl;
     config.input_mult[0] = config.split_input(block_width);
   } else {
     // Otherwise split the output across lanes in a warp.
+    std::cout << "not (indexer.NumDims() == 0 || reduction_on_fastest_striding_dimension)" << std::endl;
     config.output_mult[0] = config.split_output(block_width);
   }
 
@@ -750,9 +774,11 @@ inline void gpu_reduce_kernel(TensorIterator& iter, const ops_t& ops, ident_t id
     // Divide the input across warps in a thread-block, if that leaves at least
     // 16 elements to be summed by each thread. This will require inter-warp
     // reduction using shared memory.
+    std::cout << "(config.values_per_thread() >= block_height * 16 || config.values_per_thread() >= 256)" << std::endl;
     config.input_mult[1] = config.split_input(block_height);
   } else {
     // Otherwise, each warp handles a separate output.
+    std::cout << "not (config.values_per_thread() >= block_height * 16 || config.values_per_thread() >= 256)" << std::endl;
     config.output_mult[1] = config.split_output(block_height);
   }
 
@@ -764,6 +790,8 @@ inline void gpu_reduce_kernel(TensorIterator& iter, const ops_t& ops, ident_t id
     if (config.ctas_per_output > 65535) {
       config.ctas_per_output = 65535;
     }
+    std::cout << "(config.input_mult[1] != 0 && config.values_per_thread() >= 256 && num_outputs <= 4096)" << std::endl;
+    std::cout << "config.ctas_per_output " << config.ctas_per_output << std::endl;
     config.input_mult[2] = config.split_input(config.ctas_per_output);
   }
 
@@ -777,6 +805,8 @@ inline void gpu_reduce_kernel(TensorIterator& iter, const ops_t& ops, ident_t id
     auto stream = at::cuda::getCurrentCUDAStream();
     AT_CUDA_CHECK(cudaMemsetAsync(semaphores.get(), 0, config.semaphore_size(), stream));
   }
+
+  std::cout << "config: " << config << std::endl;
 
   AT_ASSERT(can_use_32bit_indexing);
   auto output_calc = make_output_calculator<uint32_t>(iter);
