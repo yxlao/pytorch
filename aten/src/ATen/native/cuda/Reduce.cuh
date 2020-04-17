@@ -750,9 +750,17 @@ inline void gpu_reduce_kernel(TensorIterator& iter, const ops_t& ops, ident_t id
     //   2. block.y now max out to inputs_per_output.
     dim0 = iter.shape()[iter.num_reduce_dims()];
     dim1 = inputs_per_output;
+
+    std::cout << "iter.shape(): ";
+    for (int i = 0 ; i < iter.ndim(); ++i ){
+        std::cout << iter.shape()[i] << ", ";
+    }
+    std::cout << std::endl;
+    std::cout << "iter.num_reduce_dims(): " << iter.num_reduce_dims() << std::endl;
   }
 
   // Adjust block_width and block_height
+  std::cout << "dim0: " << dim0 << ", dim1: " << dim1 << std::endl;
   config.set_block_dimension(dim0, dim1);
 
   int block_width = config.block_width;
@@ -762,24 +770,28 @@ inline void gpu_reduce_kernel(TensorIterator& iter, const ops_t& ops, ident_t id
     // Split the input across lanes if the input is contiguous in the reduced
     // dimension. This will require reduction between threads using warp
     // shuffle instructions and shared memory (if block_width > warpSize).
-    std::cout << "(indexer.NumDims() == 0 || reduction_on_fastest_striding_dimension)" << std::endl;
+    std::cout << ">>> a" << std::endl;
     config.input_mult[0] = config.split_input(block_width);
   } else {
     // Otherwise split the output across lanes in a warp.
-    std::cout << "not (indexer.NumDims() == 0 || reduction_on_fastest_striding_dimension)" << std::endl;
+    std::cout << config << std::endl;
     config.output_mult[0] = config.split_output(block_width);
+    std::cout << "block_width: " << block_width << std::endl;
+    std::cout << ">>> b" << std::endl;
+    std::cout << config << std::endl;
   }
 
   if (config.values_per_thread() >= block_height * 16 || config.values_per_thread() >= 256) {
     // Divide the input across warps in a thread-block, if that leaves at least
     // 16 elements to be summed by each thread. This will require inter-warp
     // reduction using shared memory.
-    std::cout << "(config.values_per_thread() >= block_height * 16 || config.values_per_thread() >= 256)" << std::endl;
+     std::cout << ">>> c" << std::endl;
     config.input_mult[1] = config.split_input(block_height);
   } else {
     // Otherwise, each warp handles a separate output.
-    std::cout << "not (config.values_per_thread() >= block_height * 16 || config.values_per_thread() >= 256)" << std::endl;
     config.output_mult[1] = config.split_output(block_height);
+    std::cout << ">>> d" << std::endl;
+    std::cout << config << std::endl;
   }
 
   if (config.input_mult[1] != 0 && config.values_per_thread() >= 256 && num_outputs <= 4096) {
@@ -790,7 +802,7 @@ inline void gpu_reduce_kernel(TensorIterator& iter, const ops_t& ops, ident_t id
     if (config.ctas_per_output > 65535) {
       config.ctas_per_output = 65535;
     }
-    std::cout << "(config.input_mult[1] != 0 && config.values_per_thread() >= 256 && num_outputs <= 4096)" << std::endl;
+    std::cout << ">>> e" << std::endl;
     std::cout << "config.ctas_per_output " << config.ctas_per_output << std::endl;
     config.input_mult[2] = config.split_input(config.ctas_per_output);
   }
